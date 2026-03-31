@@ -1,1 +1,110 @@
-import base64import iofrom pathlib import Pathfrom flask import Flask, request, jsonifyfrom PIL import Imagefrom gtts import gTTSapp = Flask(__name__)TEMP_DIR = Path("/tmp/easy-video")TEMP_DIR.mkdir(exist_ok=True)def _gtts_generate(text, output_path):    """Generate audio using gTTS (free, no API key needed)"""    tts = gTTS(text=text, lang='pt', tld='pt')    tts.save(str(output_path))def _process_audio(audio_data=None, script_text=None):    """Process audio: generate from text or use uploaded file."""    audio_path = TEMP_DIR / "generated_audio.mp3"    if script_text:        _gtts_generate(script_text, audio_path)        word_count = len(script_text.split())        duration = max(5.0, (word_count / 150) * 60)        return duration    elif audio_data:        audio_path.write_bytes(audio_data)        try:            from pydub import AudioSegment            audio = AudioSegment.from_file(audio_path)            return len(audio) / 1000.0        except ImportError:            return 10.0    else:        raise ValueError("Either audio_data or script_text must be provided")def _create_video_frames(width=720, height=1280, duration=5.0, fps=30):    """Create simple video frames."""    frames = []    num_frames = int(duration * fps)    for i in range(num_frames):        frame = Image.new("RGB", (width, height), color=(20, 20, 20))        frames.append(frame)    return frames@app.route("/health", methods=["GET"])def health():    return jsonify({"status": "ok"}), 200@app.route("/create-video", methods=["POST"])def create_video():    """Create video from audio file or text script."""    try:        data = request.get_json() or {}        audio_data = None        script_text = data.get("script_text", "")        if "audio" in request.files:            audio_data = request.files["audio"].read()        if not audio_data and not script_text:            return jsonify({                "success": False,                "error": "Either audio file or script_text is required"            }), 400        duration = _process_audio(audio_data=audio_data, script_text=script_text)        frames = _create_video_frames(duration=duration)        preview_buffer = io.BytesIO()        frames[0].save(preview_buffer, format="PNG")        preview_base64 = base64.b64encode(preview_buffer.getvalue()).decode()        return jsonify({            "success": True,            "duration": duration,            "frames_count": len(frames),            "preview_image": preview_base64        }), 200    except Exception as e:        return jsonify({"success": False, "error": str(e)}), 500@app.route("/generate-tts", methods=["POST"])def generate_tts():    """Generate TTS audio using gTTS."""    try:        data = request.get_json() or {}        text = data.get("text", "").strip()        if not text:            return jsonify({"success": False, "error": "Text field is required"}), 400        audio_path = TEMP_DIR / "tts_audio.mp3"        _gtts_generate(text, audio_path)        audio_bytes = audio_path.read_bytes()        audio_base64 = base64.b64encode(audio_bytes).decode()        word_count = len(text.split())        estimated_duration = max(1.0, (word_count / 150) * 60)        return jsonify({            "success": True,            "audio_base64": audio_base64,            "duration": estimated_duration,            "voice": "pt-PT (gTTS)"        }), 200    except Exception as e:        return jsonify({"success": False, "error": str(e)}), 500if __name__ == "__main__":    app.run(debug=False, host="0.0.0.0", port=5000)
+import base64
+import io
+from pathlib import Path
+
+from flask import Flask, request, jsonify
+from PIL import Image
+from gtts import gTTS
+
+app = Flash(__name__)
+
+TEMP_DIR = Path("/tmp/easy-video")
+TEMP_DIR.mkdir(exist_ok=True)
+
+
+def _gtts_generate(text, output_path):
+    """Generate audio using gTTS (free, no API key needed)"""
+    tts = gTTS(text=text, lang='pt', tld='pt')
+    tts.save(str(output_path))
+
+
+def _process_audio(audio_data=None, script_text=None):
+    """Process audio: generate from text or use uploaded file."""
+    audio_path = TEMP_DIR / "generated_audio.mp3"
+    if script_text:
+        _gtts_generate(script_text, audio_path)
+        word_count = len(script_text.split())
+        duration = max(5.0, (word_count / 150) * 60)
+        return duration
+    elif audio_data:
+        audio_path.write_bytes(audio_data)
+        try:
+            from pydub import AudioSegment
+            audio = AudioSegment.from_file(audio_path)
+            return len(audio) / 1000.0
+        except ImportError:
+            return 10.0
+    else:
+        raise ValueError("Either audio_data or script_text must be provided")
+
+
+def _create_video_frames(width=720, height=1280, duration=5.0, fps=30):
+    """Create simple video frames."""
+    frames = []
+    num_frames = int(duration * fps)
+    for i in range(num_frames):
+        frame = Image.new("RGB", (width, height), color=(20, 20, 20))
+        frames.append(frame)
+    return frames
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok"}), 200
+
+
+@app.route("/create-video", methods=["POST"])
+def create_video():
+    """Create video from audio file or text script."""
+    try:
+        data = request.get_json() or {}
+        audio_data = None
+        script_text = data.get("script_text", "")
+        if "audio" in request.files:
+            audio_data = request.files["audio"].read()
+        if not audio_data and not script_text:
+            return jsonify({
+                "success": False,
+                "error": "Either audio file or script_text is required"
+            }), 400
+        duration = _process_audio(audio_data=audio_data, script_text=script_text)
+        frames = _create_video_frames(duration=duration)
+        preview_buffer = io.BytesIO()
+        frames[0].save(preview_buffer, format="PNG")
+        preview_base64 = base64.b64encode(preview_buffer.getvalue()).decode()
+        return jsonify({
+            "success": True,
+            "duration": duration,
+            "frames_count": len(frames),
+            "preview_image": preview_base64
+        }), 200
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/generate-tts", methods=["POST"])
+def generate_tts():
+    """Generate TTS audio using gTTS."""
+    try:
+        data = request.get_json() or {}
+        text = data.get("text", "").strip()
+        if not text:
+            return jsonify({"success": False, "error": "Text field is required"}), 400
+        audio_path = TEMP_DIR / "tts_audio.mp3"
+        _gtts_generate(text, audio_path)
+        audio_bytes = audio_path.read_bytes()
+        audio_base64 = base64.b64encode(audio_bytes).decode()
+        word_count = len(text.split())
+        estimated_duration = max(1.0, (word_count / 150) * 60)
+        return jsonify({
+            "success": True,
+            "audio_base64": audio_base64,
+            "duration": estimated_duration,
+            "voice": "pt-PT (gTTS)"
+        }), 200
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+if __name__ == "__main__":
+    app.run(debug=False, host="0.0.0.0", port=5000)
