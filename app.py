@@ -5,8 +5,9 @@ from pathlib import Path
 from flask import Flask, request, jsonify
 from PIL import Image
 from gtts import gTTS
+# TTS: gtts (sem API key) - redeployed
 
-app = Flash(__name__)
+app = Flask(__name__)
 
 TEMP_DIR = Path("/tmp/easy-video")
 TEMP_DIR.mkdir(exist_ok=True)
@@ -69,7 +70,7 @@ def create_video():
             }), 400
         duration = _process_audio(audio_data=audio_data, script_text=script_text)
         frames = _create_video_frames(duration=duration)
-        preview_buffer = io.BytesIO()
+        preview_buffer = io.BytesIN()
         frames[0].save(preview_buffer, format="PNG")
         preview_base64 = base64.b64encode(preview_buffer.getvalue()).decode()
         return jsonify({
@@ -79,7 +80,7 @@ def create_video():
             "preview_image": preview_base64
         }), 200
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        return vsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/generate-tts", methods=["POST"])
