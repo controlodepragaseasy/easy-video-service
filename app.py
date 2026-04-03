@@ -107,5 +107,165 @@ def generate_tts():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+def generate_tts_with_voice(text, voice='pt-BR-AntonioNeural'):
+        """Gera áudio com voz configurável (PT-BR por defeito para UFC)"""
+        try:
+                    output_path = f"{OUTPUT_DIR}/naracao_{datetime.utcnow().timestamp()}.mp3"
+                    import edge_tts
+                    import asyncio
+            
+            async def get_tts():
+                            communicate = edge_tts.Communicate(text, voice=voice, rate="+10%", pitch="+0Hz")
+                            await communicate.save(output_path)
+                
+        asyncio.run(get_tts())
+        return output_path
+except Exception as e:
+        logger.error(f"Erro TTS: {str(e)}")
+        raise
+
+
+def create_sports_text_frame(text, position='top'):
+        """Cria frame de texto estilo UFC - barra vermelha, texto branco bold"""
+    try:
+                width, height = 1080, 1920
+                image = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+                draw = ImageDraw.Draw(image)
+        
+        bar_height = 130
+        bar_y = 60 if position == 'top' else height - 190
+
+        draw.rectangle([(0, bar_y), (width, bar_y + bar_height)], fill=(180, 0, 0, 230))
+
+        try:
+                        font_large = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 40)
+                        font_small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 32)
+                    except:
+                                    font_large = ImageFont.load_default()
+                                    font_small = font_large
+                        
+        max_chars = 32
+        words = text.split()
+        lines = []
+        current_line = ""
+        for word in words:
+                        test = (current_line + " " + word).strip()
+                        if len(test) <= max_chars:
+                                            current_line = test
+                        else:
+                                            if current_line:
+                                                                    lines.append(current_line)
+                                                                current_line = word
+                                    if current_line:
+                                                    lines.append(current_line)
+                                        
+        font = font_large if len(lines) == 1 else font_small
+        line_height = 48
+        total_h = len(lines) * line_height
+        text_y = bar_y + (bar_height - total_h) // 2
+
+        for line in lines:
+                        bbox = draw.textbbox((0, 0), line, font=font)
+            tw = bbox[2] - bbox[0]
+            tx = (width - tw) // 2
+            draw.text((tx + 2, text_y + 2), line, fill=(0, 0, 0, 200), font=font)
+            draw.text((tx, text_y), line, fill=(255, 255, 255, 255), font=font)
+            text_y += line_height
+
+        output_path = f"{OUTPUT_DIR}/sports_frame_{position}_{datetime.utcnow().timestamp()}.png"
+        image.save(output_path)
+        return output_path
+except Exception as e:
+        logger.error(f"Erro frame sports: {str(e)}")
+        raise
+
+
+def compose_sports_video(video_path, audio_path, hook_frame, cta_frame):
+        """Compõe vídeo UFC 9:16 com FFmpeg - duração do áudio, máx 60s"""
+    try:
+                output_path = f"{OUTPUT_DIR}/ufc_short_{int(datetime.utcnow().timestamp())}.mp4"
+
+        dur_cmd = [
+                        'ffprobe', '-v', 'error',
+                        '-show_entries', 'format=duration',
+                        '-of', 'default=noprint_wrappers=1:nokey=1',
+                        audio_path
+        ]
+        result = subprocess.run(dur_cmd, capture_output=True, text=True)
+        try:
+                        duration = min(float(result.stdout.strip()) + 1.0, 60.0)
+        except:
+            duration = 58.0
+
+        cmd = [
+                        'ffmpeg',
+                        '-stream_loop', '-1', '-i', video_path,
+                        '-i', audio_path,
+                        '-i', hook_frame,
+                        '-i', cta_frame,
+                        '-filter_complex',
+                        '[0:v]scale=1080:1920:force_original_aspect_ratio=increase,'
+                        'crop=1080:1920,setsar=1[bg];'
+                        '[bg][2:v]overlay=0:0[v1];'
+                        '[v1][3:v]overlay=0:main_h-overlay_h[vout]',
+                        '-map', '[vout]',
+                        '-map', '1:a',
+                        '-c:v', 'libx264',
+                        '-preset', 'fast',
+                        '-c:a', 'aac',
+                        '-b:a', '128k',
+                        '-r', '30',
+                        '-t', str(duration),
+                        '-shortest',
+                        '-y',
+                        output_path
+        ]
+
+        subprocess.run(cmd, check=True, capture_output=True)
+        return output_path
+except Exception as e:
+        logger.error(f"Erro FFmpeg sports: {str(e)}")
+        raise
+
+
+@app.route('/create-sports-video', methods=['POST'])
+def create_sports_video():
+        """
+            Cria Short UFC/MMA vertical 9:16 narrado em PT-BR.
+                Body JSON: script_text, hook, cta, pexels_query, voice (opcional)
+                    Retorna: ficheiro MP4
+                        """
+    try:
+                data = request.get_json()
+
+        required_fields = ['script_text', 'hook', 'cta', 'pexels_query']
+        missing = [f for f in required_fields if f not in data]
+        if missing:
+                        return jsonify({'error': f'Missing fields: {missing}'}), 400
+
+        voice = data.get('voice', 'pt-BR-AntonioNeural')
+
+        logger.info(f"[UFC] Gerando video - hook: {data['hook'][:60]}")
+
+        audio_path = generate_tts_with_voice(data['script_text'], voice)
+        video_stock = download_pexels_video(data['pexels_query'])
+        hook_frame = create_sports_text_frame(data['hook'], position='top')
+        cta_frame = create_sports_text_frame(data['cta'], position='bottom')
+        output_path = compose_sports_video(video_stock, audio_path, hook_frame, cta_frame)
+
+        logger.info(f"[UFC] Video criado: {output_path}")
+
+        return send_file(
+                        output_path,
+                        mimetype='video/mp4',
+                        as_attachment=True,
+                        download_name=f'ufc_short_{int(datetime.utcnow().timestamp())}.mp4'
+        )
+
+except Exception as e:
+        logger.error(f"[UFC] Erro: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
 if __name__ == "__main__":
     app.run(debug=False, host="0.0.0.0", port=5000)
